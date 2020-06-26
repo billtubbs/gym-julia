@@ -21,12 +21,16 @@ understand and use to help us learn about the relative
 strengths and weaknesses of control/RL approaches.
 """
 
+module CartPoleBTEnv
+
+include("cartpend.jl")
+
 using Printf
 using Test
 using DifferentialEquations
 
 
-struct CartPoleBTEnv
+mutable struct CartPole
     gravity::Float64
     masscart::Float64
     masspole::Float64
@@ -51,7 +55,7 @@ struct CartPoleBTEnv
 end
 
 # Set defaults with keyword arguments
-CartPoleBTEnv(;
+CartPole(;
     gravity=-10.0, 
     masscart=5.0, 
     masspole=1.0, 
@@ -74,19 +78,53 @@ CartPoleBTEnv(;
     action_space=[[-Inf64; -Inf64]],
     seed=1,
     state=zeros(4)
-) = CartPoleBTEnv(
+) = CartPole(
     gravity, masscart, masspole, length, friction, max_force,
     goal_state, initial_state, disturbances, initial_state_variance,
     measurement_error, hidden_states, variance_levels, 
     tau, n_steps, time_step, kinematics_integrator,
     observation_space, action_space, seed, state
 )
-
 # Usage:
-# CartPoleBTEnv()  # Defaults
-# CartPoleBTEnv(;friction=2)  # Specify non-default values
+# CartPole()  # Defaults
+# CartPole(;friction=2)  # Specify non-default values
 
-gym = CartPoleBTEnv()
+
+function angle_normalize(theta)
+    return theta % (2*pi)
+end
+
+function cost_function(state, goal_state)
+        """Evaluates the cost based on the current state y and
+        the goal state.
+        """
+        return ((state[1] - goal_state[1])^2 +
+                (angle_normalize(state[3]) - goal_state[3])^2)
+end
+
+
+# Unit Tests
+gym = CartPole()
 @test gym.friction == 1.0
 @test gym.state == [0.0; 0.0; 0.0; 0.0]
 @test gym.goal_state == [0.0; 0.0; 3.141592653589793; 0.0]
+
+# Test angle_normalize
+@test angle_normalize(0) == 0.0
+@test angle_normalize(pi*2.1) == angle_normalize(pi*0.1)
+@test angle_normalize(-pi*2.1) == angle_normalize(-pi*0.1)
+@test angle_normalize(pi*1.9) == angle_normalize(pi*3.9)
+
+# Test cost_function
+cost_function(gym::CartPole) = cost_function(gym.state, gym.goal_state)
+cost_function(gym::CartPole, state) = cost_function(state, gym.goal_state)
+
+gym = CartPole()
+@test cost_function(zeros(4), zeros(4)) == 0.0
+@test cost_function(zeros(4), [0.0, 0.0, pi, 0.0]) == 9.869604401089358
+@test cost_function(gym) == 9.869604401089358
+@test cost_function(gym, zeros(4)) == 9.869604401089358
+
+export CartPole
+
+end
