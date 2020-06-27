@@ -8,9 +8,9 @@ This is an alternative version of my [cart pole custom AI Gym environment](https
 
 ## Initial Test Results
 
-| Test                                   | Python      | Julia        | Ratio        |
-|----------------------------------------|-------------|--------------|--------------|
-| 100 episodes using 'RK45' solver       | 7.7 seconds | 2.0 seconds  |         ~3.8 |
-| 100 episodes using Euler approximation | 1.8 seconds | 0.05 seconds |          ~30 |
+| Test                                   | Python      | Julia         | Ratio      |
+|----------------------------------------|-------------|---------------|------------|
+| 100 episodes using LSODA solver        | 6.9 seconds |   1.5 seconds |       ~4.5 |
+| 100 episodes using Euler approximation | 1.8 seconds | 0.068 seconds |        ~26 |
 
-Test machine: Mac Mini 2012 with 16 GB RAM
+Test machine: 2.3 GHz Quad core Mac Mini 2012 with 16 GB RAM
