@@ -21,18 +21,23 @@ understand and use to help us learn about the relative
 strengths and weaknesses of control/RL approaches.
 """
 
+# TODO: Consider using ModelingToolkit.jl
+# https://github.com/SciML/ModelingToolkit.jl
+
 module CartPoleBTEnv
 
-export CartPole, cost_function, step
+export CartPole, cost_function, step, reset, seed
 
 include("cartpend.jl")
 
 using Printf
 using Test
+using Random
 using DifferentialEquations
 
 
 mutable struct CartPole
+    description::String
     gravity::Float64
     masscart::Float64
     masspole::Float64
@@ -40,7 +45,7 @@ mutable struct CartPole
     friction::Float64
     max_force::Float64
     goal_state::Array
-    initial_state::String
+    initial_state::Array
     disturbances::String
     initial_state_variance::String
     measurement_error::String
@@ -53,44 +58,56 @@ mutable struct CartPole
     observation_space::Array
     action_space::Array
     seed::Int
+    rng::AbstractRNG
     state::Array
+
+    # Inner constructor
+    function CartPole(;
+            # Keyword arguments with default values 
+            description::String="Cart-pendulum system",
+            goal_state::Array=[0.0; 0.0; pi; 0.0],
+            initial_state::Array=[0.0; 0.0; pi; 0.0],
+            disturbances::String="none",
+            initial_state_variance::String="none",
+            measurement_error::String="none",  # Not implemented yet
+            hidden_states::Bool=false,  # Not implemented yet
+            n_steps::Int=100
+        )
+
+        # Physical attributes of system
+        gravity::Float64 = -10.0
+        masscart::Float64 = 5.0
+        masspole::Float64 = 1.0
+        length::Float64 = 2.0
+        friction::Float64 = 1.0
+        max_force::Float64 = 200.0
+
+        # Other features
+        variance_levels::Dict = Dict("none"=>0.0, "low"=>0.01, "high"=>0.2)
+
+        # Details of simulation
+        tau::Float64 = 0.05
+        time_step::Int = 0
+        kinematics_integrator::String = "RK45"
+        observation_space::Array = [[-Inf64; -Inf64; -Inf64; -Inf64],
+                                    [Inf64; Inf64; Inf64; Inf64]]
+        action_space::Array = [-max_force; max_force]
+        seed::Int = 1
+        rng = MersenneTwister(seed)
+        state = zeros(4)  # Initial state is set by reset method
+        new(description,
+            gravity, masscart, masspole, length, friction, max_force,
+            goal_state, initial_state, disturbances, initial_state_variance,
+            measurement_error, hidden_states, variance_levels, 
+            tau, n_steps, time_step, kinematics_integrator,
+            observation_space, action_space, seed, rng, state
+        )
+    end
 end
 
-# Set defaults with keyword arguments
-CartPole(;
-    gravity=-10.0, 
-    masscart=5.0, 
-    masspole=1.0, 
-    length=2.0, 
-    friction=1.0, 
-    max_force=200.0,
-    goal_state=[0.0; 0.0; pi; 0.0],
-    initial_state="goal",
-    disturbances="none",
-    initial_state_variance="none",
-    measurement_error="none",  # Not implemented yet
-    hidden_states=false,  # Not implemented yet
-    variance_levels=Dict("none"=>0.0, "low"=>0.01, "high"=>0.2),
-    tau=0.05,
-    n_steps=100,
-    time_step=0,
-    kinematics_integrator="RK45",
-    observation_space=[[-Inf64; -Inf64; -Inf64; -Inf64],
-                       [Inf64; Inf64; Inf64; Inf64]],
-    action_space=[[-Inf64; -Inf64]],
-    seed=1,
-    state=zeros(4)
-) = CartPole(
-    gravity, masscart, masspole, length, friction, max_force,
-    goal_state, initial_state, disturbances, initial_state_variance,
-    measurement_error, hidden_states, variance_levels, 
-    tau, n_steps, time_step, kinematics_integrator,
-    observation_space, action_space, seed, state
-)
-
 # Usage:
-# CartPole()  # Defaults
-# CartPole(;friction=2)  # Specify non-default values
+# CartPole()  # Use defaults
+# CartPole(;disturbances="high")  # Specify non-default values
 
 
 function angle_normalize(theta)
@@ -104,13 +121,17 @@ function cost_function(state, goal_state)
         return ((state[1] - goal_state[1])^2 +
                 (angle_normalize(state[3]) - goal_state[3])^2)
 end
+cost_function(gym::CartPole) = cost_function(gym.state, gym.goal_state)
+cost_function(gym::CartPole, state) = cost_function(state, gym.goal_state)
 
 
-# Note: step already exists in Main so need to build on it here
-function Base.step(gym::CartPole, u)
+# Note: function step already exists in Main so need to 
+# extend it as a new method
+function Base.step(gym::CartPole, u::Float64)
     u = clamp(u, -gym.max_force, gym.max_force)
     y = gym.state
     t = gym.time_step * gym.tau
+    global cost_function
     
     if gym.kinematics_integrator == "euler"
         y_dot = cartpend_dydt(t, y,
@@ -137,11 +158,43 @@ function Base.step(gym::CartPole, u)
         prob = ODEProblem(f, y0, tspan)
         sol = solve(prob)
         gym.state = sol.u[end]
-        reward = 0.0  # Not implemented
-        done = false  # Not implemented
+        
     end
 
+    # Add disturbance only to pendulum angular velocity (theta_dot)
+    if gym.disturbances != "none"
+        v = gym.variance_levels[gym.disturbances]
+        gym.state[4] += 0.05 * v * randn(gym.rng)
+    end
+
+    reward = -cost_function(gym)
+    gym.time_step += 1
+    done = (gym.time_step >= gym.n_steps) ? true : false
+
     return gym.state, reward, done
+end
+
+
+function Base.step(gym::CartPole, u::Array)
+    @assert size(u) == (1,)
+    step(gym, u[1])
+end
+
+
+function Base.reset(gym::CartPole)
+    gym.state = copy(gym.initial_state)
+    @assert size(gym.state) == (4,)
+    # Add random variance to initial state
+    v = gym.variance_levels[gym.initial_state_variance]
+    gym.state += v * randn(gym.rng, 4)
+    gym.time_step = 0
+    return gym.state
+end
+
+
+function seed(gym::CartPole, seed)
+    gym.rng = MersenneTwister(seed)
+    return seed
 end
 
 
@@ -150,6 +203,8 @@ gym = CartPole()
 @test gym.friction == 1.0
 @test gym.state == [0.0; 0.0; 0.0; 0.0]
 @test gym.goal_state == [0.0; 0.0; 3.141592653589793; 0.0]
+reset(gym)
+@test gym.state == gym.initial_state  # True if variance is none
 
 # Test angle_normalize
 @test angle_normalize(0) == 0.0
@@ -158,12 +213,9 @@ gym = CartPole()
 @test angle_normalize(pi*1.9) == angle_normalize(pi*3.9)
 
 # Test cost_function
-cost_function(gym::CartPole) = cost_function(gym.state, gym.goal_state)
-cost_function(gym::CartPole, state) = cost_function(state, gym.goal_state)
-gym = CartPole()
 @test cost_function(zeros(4), zeros(4)) == 0.0
 @test cost_function(zeros(4), [0.0, 0.0, pi, 0.0]) == 9.869604401089358
-@test cost_function(gym) == 9.869604401089358
+@test cost_function(gym) == 0.0
 @test cost_function(gym, zeros(4)) == 9.869604401089358
 
 # Test step function
