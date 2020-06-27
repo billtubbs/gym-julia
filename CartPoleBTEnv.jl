@@ -34,6 +34,7 @@ using Printf
 using Test
 using Random
 using DifferentialEquations
+using LSODA
 
 
 mutable struct CartPole
@@ -88,7 +89,7 @@ mutable struct CartPole
         # Details of simulation
         tau::Float64 = 0.05
         time_step::Int = 0
-        kinematics_integrator::String = "RK45"
+        kinematics_integrator::String = "LSODA"
         observation_space::Array = [[-Inf64; -Inf64; -Inf64; -Inf64],
                                     [Inf64; Inf64; Inf64; Inf64]]
         action_space::Array = [-max_force; max_force]
@@ -133,7 +134,7 @@ function Base.step(gym::CartPole, u::Float64)
     t = gym.time_step * gym.tau
     global cost_function
     
-    if gym.kinematics_integrator == "euler"
+    if gym.kinematics_integrator == "Euler"
         y_dot = cartpend_dydt(t, y,
                               gym.masspole,
                               gym.masscart,
@@ -145,7 +146,22 @@ function Base.step(gym::CartPole, u::Float64)
         reward = 0.0  # Not implemented
         done = false  # Not implemented
 
-    elseif gym.kinematics_integrator == "RK45"
+    else
+        # See here https://docs.sciml.ai/v4.0/solvers/ode_solve.html
+        if gym.kinematics_integrator == "LSODA"
+            # Well-known method which uses switching to solve both 
+            # stiff and non-stiff equations
+            alg = lsoda()
+        elseif gym.kinematics_integrator == "DP5"
+            # Dormand-Prince 5/4 Runge-Kutta method
+            alg = DP5()
+        elseif gym.kinematics_integrator == "BS3"
+            # Bogacki-Shampine 3/2 method
+            alg = BS3()
+        else gym.kinematics_integrator == "Tsit5"
+            # Tsitouras 5/4 Runge-Kutta method (default)
+            alg = Tsit5()
+        end
         f(y, p, t) = cartpend_dydt(t, y,
                                    gym.masspole,
                                    gym.masscart,
@@ -156,7 +172,7 @@ function Base.step(gym::CartPole, u::Float64)
         y0 = gym.state
         tspan = (t, t + gym.tau)
         prob = ODEProblem(f, y0, tspan)
-        sol = solve(prob)
+        sol = solve(prob, alg)
         gym.state = sol.u[end]
         
     end
