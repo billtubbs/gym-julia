@@ -158,9 +158,11 @@ function Base.step(gym::CartPole, u::Float64)
         elseif gym.kinematics_integrator == "BS3"
             # Bogacki-Shampine 3/2 method
             alg = BS3()
-        else gym.kinematics_integrator == "Tsit5"
+        elseif gym.kinematics_integrator == "Tsit5"
             # Tsitouras 5/4 Runge-Kutta method (default)
             alg = Tsit5()
+        else
+            error("solver not implemented")
         end
         f(y, p, t) = cartpend_dydt(t, y,
                                    gym.masspole,
@@ -238,5 +240,38 @@ reset(gym)
 gym = CartPole()
 gym.state = zeros(4)
 state, reward, done = step(gym, 0.0)
+@test state == gym.state
+
+# Test step solutions for each solver
+solver_names = ["Euler", "LSODA", "DP5", "BS3", "Tsit5"]
+
+# Compare state values after 5 timesteps with those from Python 
+# Open AI gym implementation (cartpole_bt_env.py)
+# with 'RK45' solver: [0.06179183, 0.49282067, 3.17330351, 0.2594884 ]
+# With LSODA solver: [0.06183026, 0.49287447, 3.17335713, 0.2596762 ]
+# With Euler method: [0.04956447, 0.49255687, 3.166531, 0.2524997 ]
+state_test_values = Dict(
+    "Euler" => [0.04956447, 0.49255687, 3.166531, 0.2524997 ],
+    "LSODA" => [0.06183026, 0.49287447, 3.17335713, 0.2596762 ],
+    "DP5" => Array([0.06179183, 0.49282067, 3.17330351, 0.2594884 ]), 
+    "BS3" => Array([0.06179183, 0.49282067, 3.17330351, 0.2594884 ]), 
+    "Tsit5" => Array([0.06179183, 0.49282067, 3.17330351, 0.2594884 ])
+)
+# Biggest difference is in state[4] with LSODA method:
+# rel_diff = [1.35586e-5, 2.614e-5, 2.79553e-6, 0.000161289]
+
+gym = CartPole()
+gym.disturbances = "none"
+gym.initial_state_variance = "none"
+for name in solver_names
+    gym.kinematics_integrator = name
+    reset(gym)
+    for i in 1:5
+        state, reward, done = step(gym, 10.0)
+    end
+    rel_diff = abs.(gym.state - state_test_values[name]) ./ gym.state
+    @test gym.time_step == 5
+    @test maximum(rel_diff) < 0.0002
+end
 
 end
