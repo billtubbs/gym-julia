@@ -1,9 +1,9 @@
 """
-This is a Julia version of the following Open AI Gym custom
-environment: https://github.com/billtubbs/gym-CartPole-bt-v0/
+This is a Julia version of the following Open AI env custom
+environment: https://github.com/billtubbs/env-CartPole-bt-v0/
 This version of the classic cart-pole or cart-and-pendulum
 control problem offers more variations on the basic OpenAI
-Gym version (CartPole-v1).
+env version (CartPole-v1).
 It is based on a MATLAB implementation by Steven L. Brunton
 as part of his Control Bootcamp series of videos on YouTube.
 Features of this version include:
@@ -26,7 +26,7 @@ strengths and weaknesses of control/RL approaches.
 
 module CartPoleBTEnv
 
-export CartPole, cost_function, step, reset, seed
+export CartPole, cost_function, step!, reset!, seed!
 
 include("cartpend.jl")
 
@@ -63,6 +63,8 @@ mutable struct CartPole
     state::Array
 
     # Inner constructor
+    # Note: adding an inner constructor means the basic
+    # constructor is no longer available to the outside
     function CartPole(;
             # Keyword arguments with default values 
             description::String="Cart-pendulum system",
@@ -122,107 +124,104 @@ function cost_function(state, goal_state)
         return ((state[1] - goal_state[1])^2 +
                 (angle_normalize(state[3]) - goal_state[3])^2)
 end
-cost_function(gym::CartPole) = cost_function(gym.state, gym.goal_state)
-cost_function(gym::CartPole, state) = cost_function(state, gym.goal_state)
+cost_function(env::CartPole) = cost_function(env.state, env.goal_state)
+cost_function(env::CartPole, state) = cost_function(state, env.goal_state)
 
 
-# Note: function step already exists in Main so need to 
-# extend it as a new method
-function Base.step(gym::CartPole, u::Float64)
-    u = clamp(u, -gym.max_force, gym.max_force)
-    y = gym.state
-    t = gym.time_step * gym.tau
+# Note: A function step already exists in Main but since 
+# here our step method makes changes to the environment,
+# we use the step! notation which differentiates it from
+# the Base.step method.
+function step!(env::CartPole, u::Float64)
+    u = clamp(u, -env.max_force, env.max_force)
+    y = env.state
+    t = env.time_step * env.tau
     global cost_function
     
-    if gym.kinematics_integrator == "Euler"
+    if env.kinematics_integrator == "Euler"
         y_dot = cartpend_dydt(t, y,
-                              gym.masspole,
-                              gym.masscart,
-                              gym.length,
-                              gym.gravity,
-                              gym.friction,
+                              env.masspole,
+                              env.masscart,
+                              env.length,
+                              env.gravity,
+                              env.friction,
                               u)
-        gym.state += gym.tau * y_dot
+        env.state += env.tau * y_dot
         reward = 0.0  # Not implemented
         done = false  # Not implemented
 
     else
         # See here https://docs.sciml.ai/v4.0/solvers/ode_solve.html
-        if gym.kinematics_integrator == "LSODA"
+        if env.kinematics_integrator == "LSODA"
             # Well-known method which uses switching to solve both 
             # stiff and non-stiff equations
             alg = lsoda()
-        elseif gym.kinematics_integrator == "DP5"
+        elseif env.kinematics_integrator == "DP5"
             # Dormand-Prince 5/4 Runge-Kutta method
             alg = DP5()
-        elseif gym.kinematics_integrator == "BS3"
+        elseif env.kinematics_integrator == "BS3"
             # Bogacki-Shampine 3/2 method
             alg = BS3()
-        elseif gym.kinematics_integrator == "Tsit5"
+        elseif env.kinematics_integrator == "Tsit5"
             # Tsitouras 5/4 Runge-Kutta method (default)
             alg = Tsit5()
         else
             error("solver not implemented")
         end
         f(y, p, t) = cartpend_dydt(t, y,
-                                   gym.masspole,
-                                   gym.masscart,
-                                   gym.length,
-                                   gym.gravity,
-                                   gym.friction,
+                                   env.masspole,
+                                   env.masscart,
+                                   env.length,
+                                   env.gravity,
+                                   env.friction,
                                    u)
-        y0 = gym.state
-        tspan = (t, t + gym.tau)
+        y0 = env.state
+        tspan = (t, t + env.tau)
         prob = ODEProblem(f, y0, tspan)
         sol = solve(prob, alg)
-        gym.state = sol.u[end]
+        env.state = sol.u[end]
         
     end
 
     # Add disturbance only to pendulum angular velocity (theta_dot)
-    if gym.disturbances != "none"
-        v = gym.variance_levels[gym.disturbances]
-        gym.state[4] += 0.05 * v * randn(gym.rng)
+    if env.disturbances != "none"
+        v = env.variance_levels[env.disturbances]
+        env.state[4] += 0.05 * v * randn(env.rng)
     end
 
-    reward = -cost_function(gym)
-    gym.time_step += 1
-    done = (gym.time_step >= gym.n_steps) ? true : false
+    reward = -cost_function(env)
+    env.time_step += 1
+    done = (env.time_step >= env.n_steps) ? true : false
 
-    return gym.state, reward, done
+    return env.state, reward, done
 end
 
 
-function Base.step(gym::CartPole, u::Array)
+function step!(env::CartPole, u::Array)
     @assert size(u) == (1,)
-    step(gym, u[1])
+    step!(env, u[1])
 end
 
 
-function Base.reset(gym::CartPole)
-    gym.state = copy(gym.initial_state)
-    @assert size(gym.state) == (4,)
+function reset!(env::CartPole)
+    env.state = copy(env.initial_state)
+    @assert size(env.state) == (4,)
     # Add random variance to initial state
-    v = gym.variance_levels[gym.initial_state_variance]
-    gym.state += v * randn(gym.rng, 4)
-    gym.time_step = 0
-    return gym.state
+    v = env.variance_levels[env.initial_state_variance]
+    env.state += v * randn(env.rng, 4)
+    env.time_step = 0
+    return env.state
 end
 
 
-function seed(gym::CartPole, seed)
-    gym.rng = MersenneTwister(seed)
-    return seed
+function seed!(env::CartPole, seed::UInt32)
+    env.rng = MersenneTwister(seed)
+    return env.rng.seed[1]
 end
+seed!(env::CartPole, seed) = seed!(env, convert(UInt32, seed))
 
 
-# Unit Tests
-gym = CartPole()
-@test gym.friction == 1.0
-@test gym.state == [0.0; 0.0; 0.0; 0.0]
-@test gym.goal_state == [0.0; 0.0; 3.141592653589793; 0.0]
-reset(gym)
-@test gym.state == gym.initial_state  # True if variance is none
+# Unit tests
 
 # Test angle_normalize
 @test angle_normalize(0) == 0.0
@@ -233,45 +232,9 @@ reset(gym)
 # Test cost_function
 @test cost_function(zeros(4), zeros(4)) == 0.0
 @test cost_function(zeros(4), [0.0, 0.0, pi, 0.0]) == 9.869604401089358
-@test cost_function(gym) == 0.0
-@test cost_function(gym, zeros(4)) == 9.869604401089358
-
-# Test step function
-gym = CartPole()
-gym.state = zeros(4)
-state, reward, done = step(gym, 0.0)
-@test state == gym.state
-
-# Test step solutions for each solver
-solver_names = ["Euler", "LSODA", "DP5", "BS3", "Tsit5"]
-
-# Compare state values after 5 timesteps with those from Python 
-# Open AI gym implementation (cartpole_bt_env.py)
-# with 'RK45' solver: [0.06179183, 0.49282067, 3.17330351, 0.2594884 ]
-# With LSODA solver: [0.06183026, 0.49287447, 3.17335713, 0.2596762 ]
-# With Euler method: [0.04956447, 0.49255687, 3.166531, 0.2524997 ]
-state_test_values = Dict(
-    "Euler" => [0.04956447, 0.49255687, 3.166531, 0.2524997 ],
-    "LSODA" => [0.06183026, 0.49287447, 3.17335713, 0.2596762 ],
-    "DP5" => Array([0.06179183, 0.49282067, 3.17330351, 0.2594884 ]), 
-    "BS3" => Array([0.06179183, 0.49282067, 3.17330351, 0.2594884 ]), 
-    "Tsit5" => Array([0.06179183, 0.49282067, 3.17330351, 0.2594884 ])
-)
-# Biggest difference is in state[4] with LSODA method:
-# rel_diff = [1.35586e-5, 2.614e-5, 2.79553e-6, 0.000161289]
-
-gym = CartPole()
-gym.disturbances = "none"
-gym.initial_state_variance = "none"
-for name in solver_names
-    gym.kinematics_integrator = name
-    reset(gym)
-    for i in 1:5
-        state, reward, done = step(gym, 10.0)
-    end
-    rel_diff = abs.(gym.state - state_test_values[name]) ./ gym.state
-    @test gym.time_step == 5
-    @test maximum(rel_diff) < 0.0002
-end
+env = CartPole(initial_state_variance="none")
+reset!(env)
+@test cost_function(env) == 0.0
+@test cost_function(env, zeros(4)) == 9.869604401089358
 
 end
